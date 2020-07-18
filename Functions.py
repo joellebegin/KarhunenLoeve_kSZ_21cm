@@ -466,3 +466,64 @@ class KL_transform:
         
         ax.grid()
         plt.legend()
+
+
+def load_derivatives(path):
+    '''Assumes directory structure: 
+    
+    results
+    |
+    └───results_0
+    |   |   kSZ_power_spectrum_kSZ_Cells_zval_0_neg.txt
+    |   |   kSZ_power_spectrum_kSZ_Cells_zval_0_pos.txt
+    └───results_1
+    |   |   kSZ_power_spectrum_kSZ_Cells_zval_1_neg.txt
+    |   |   kSZ_power_spectrum_kSZ_Cells_zval_1_pos.txt
+    | ...
+
+    where kSZ_power_spectrum_kSZ_Cells_zval_i_neg.txt is the ksz power spectrum 
+    evaluated with x_HI(z = zbin_i) -= delta-x_HI, and the postitive one is 
+    evaluated with x_HI(z = zbin_i) += delta-x_HI. 
+
+    This is ugly and too many things hardcoded. I will make it more general 
+    later. 
+    
+    '''
+    T_CMB_uK=2.7260*1e6
+   
+    specs_pos = []
+    specs_neg = []
+    zval_pos = []
+    zval_neg = []
+    
+    for d in os.listdir('results'):
+        for f in os.listdir("results/" +d):
+            loc = "results/"+d+"/"+f
+            zval = (int(f.split("_")[6]))
+            per_type =(f.split("_")[-1].split(".")[0])
+            
+            l1, ksz_tot, ksz1 = np.loadtxt(loc,unpack=True)    
+            patch = l1*(l1+1)*ksz1/(2*np.pi)*(T_CMB_uK**2)
+            if per_type == "pos":
+                specs_pos.append(patch)
+                zval_pos.append(zval)
+            elif per_type == "neg":
+                specs_neg.append(patch)
+                zval_neg.append(zval)
+                
+        ells = l1
+                
+    inds_pos = np.argsort(zval_pos)
+    inds_neg = np.argsort(zval_neg)
+
+    specs_pos_sorted = np.array(specs_pos)[inds_pos]
+    specs_neg_sorted = np.array(specs_neg)[inds_neg]
+
+    derivs = specs_pos_sorted - specs_neg_sorted
+
+    #dividing by 2*delta-x_HI ; this part should not be hardcoded
+    derivs[:39] /= 2*0.01
+    derivs[39:49] /= 2*0.001
+    derivs[49:] /= 2*0.0001
+
+    return derivs
