@@ -2,54 +2,55 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from scipy.linalg import inv
 from scipy import interpolate
+import os
 
 class GSFisher:
 
     def __init__(self,band = np.array([100,200]), nu_lims = np.array([110,200]),
     N_samples = 100, N_zbins = 20, int_time = 5*3600, N_poly=3, 
     fgnd_fid=np.array([np.log(320*1000),-2.54,-0.074,0.013])):
-    '''
-    Generates Fisher matrices for the 21cm signal, derivatives taken with resp.
-    to the neutral fraction x_HI(z) for some redshift bins. Can include 
-    foregrounds in two ways: parametrized and then marginalized over, or included 
-    in the covariance. 
+        '''
+        Generates Fisher matrices for the 21cm signal, derivatives taken with 
+        respect to the neutral fraction x_HI(z) for some redshift bins. Can 
+        include foregrounds in two ways: parametrized and then marginalized over, 
+        or included in the covariance. 
 
-    Parameters:
-    -----------
+        Parameters:
+        -----------
 
-    band: 1d array
-        The frequencies over which the experiment is conducted, [nu_min, nu_max]
+        band: 1d array
+            The frequencies over which the experiment is conducted, [nu_min, nu_max]
 
-    nu_lims: 1d array
-        The frequencies that will be considered for the derivatives
+        nu_lims: 1d array
+            The frequencies that will be considered for the derivatives
 
-    N_samples: int
-        How many temperature samples are measured in the frequency range set 
-        by nu_lims
+        N_samples: int
+            How many temperature samples are measured in the frequency range set 
+            by nu_lims
 
-    N_zbins: int
-        Number of redshift bins
+        N_zbins: int
+            Number of redshift bins
 
-    int_time: float/int
-        Integration time of experiment in seconds 
+        int_time: float/int
+            Integration time of experiment in seconds 
 
-    N_poly: int 
-        Polynomial degree of foreground fit 
+        N_poly: int 
+            Polynomial degree of foreground fit 
 
-    fgnd_fid: 1d array 
-        The fiducial parameters for the foreground polynomial fit, in order 
-        [a_0, a_1, ...]
+        fgnd_fid: 1d array 
+            The fiducial parameters for the foreground polynomial fit, in order 
+            [a_0, a_1, ...]
 
 
-    Methods:
-    --------
+        Methods:
+        --------
 
-    compute_fisher_fgnds_marginalized:
-        Method for including foregrounds as parameters, then marginalizing over 
+        compute_fisher_fgnds_marginalized:
+            Method for including foregrounds as parameters, then marginalizing over 
 
-    compute_fisher_fgnds_cov: 
-        Method for including foregrounds in covariance. 
-    '''
+        compute_fisher_fgnds_cov: 
+            Method for including foregrounds in covariance. 
+        '''
 
         #initializing attributes
 
@@ -495,7 +496,7 @@ def load_derivatives(path):
     specs_neg = []
     zval_pos = []
     zval_neg = []
-    
+
     for d in os.listdir('results'):
         for f in os.listdir("results/" +d):
             loc = "results/"+d+"/"+f
@@ -526,4 +527,4 @@ def load_derivatives(path):
     derivs[39:49] /= 2*0.001
     derivs[49:] /= 2*0.0001
 
-    return derivs
+    return ells,derivs
