@@ -39,7 +39,7 @@ class GSFisher:
 
         fgnd_fid: 1d array 
             The fiducial parameters for the foreground polynomial fit, in order 
-            [a_0, a_1, ...]
+            [a_0, a_1, ...]. Default from Pritchard and Loeb 2010, arxiv 1005.4057
 
 
         Methods:
@@ -85,9 +85,10 @@ class GSFisher:
         return self.fisher
 
 
-    def compute_fisher_fgnd_cov(self):
+    def compute_fisher_fgnd_cov(self, const_xHI = False):
         '''returns fisher matrix with foregrounds included in covariance'''
 
+        self.const_xHI = const_xHI
         #------------------------ foreground paramters ------------------------#
         self.nu_star = 150 # MHz
         
@@ -192,15 +193,23 @@ class GSFisher:
         respect to x_HI '''
 
         self.dT_b = 27*np.sqrt((1+self.z_linspace)/10)
+        # self.dT_b = np.ones_like(self.z_linspace)
+
 
     def get_T_b(self):
         '''tanh model of the brightness temperature'''
         T_21cm = 27 #mK
         z_r = 8
         delta_z = 1
+        
+        if self.const_xHI:
+            xHI = 0.5*np.ones_like(self.z_linspace)
+        
+        else: #tanh model
+            xHI = 0.5*(np.tanh((self.z_linspace-z_r)/delta_z) +1)
+        
+        return (T_21cm)*np.sqrt((1+self.z_linspace)/10)*xHI
 
-        return T_21cm*np.sqrt((1+self.z_linspace)/2)*(np.tanh((self.z_linspace-z_r)/delta_z) +1) 
-   
     #======================= foreground model functions =======================#
     
     def dT_fg(self, k):
@@ -231,10 +240,12 @@ class GSFisher:
         '''gets the covariance matrix for the fisher matrix computation'''
        
         #-------------------------- noise covariance --------------------------# 
-        T_sky = self.get_T_fg() + self.get_T_b()
-        bwidth_Hz = self.bandwidth*1e6
-        variance = (T_sky**2)/(bwidth_Hz*self.int_time)
-        self.C_noise = np.identity(self.N_samples)*variance
+        self.T_sky = self.get_T_fg() + self.get_T_b()
+        # self.channel_bwidth = (self.nu_linspace[0]-self.nu_linspace[1])*1000 #Hz
+        self.channel_bwidth = 0.1*1000
+        
+        self.variance = (self.T_sky**2)/(self.channel_bwidth*self.int_time)
+        self.C_noise = np.identity(self.N_samples)*self.variance
 
         #------------------------ foreground covariance -----------------------# 
         if self.fgnds_in_cov:
@@ -242,7 +253,7 @@ class GSFisher:
             covariance = self.C_noise + self.C_fg
         else:
             covariance = self.C_noise 
-        
+        # self.cov = self.C_noise
         self.cov = covariance
         self.cov_inv = inv(self.cov)
 
@@ -267,7 +278,7 @@ class GSFisher:
         
         for i in range(self.N_samples):
             for j in range(self.N_samples):
-                cov[i,j] += np.round(self.C(self.nu_linspace[i], self.nu_linspace[j]))
+                cov[i,j] = np.round(self.C(self.nu_linspace[i], self.nu_linspace[j]))
 
         return cov
 
@@ -277,12 +288,13 @@ class GSFisher:
         2012, MNRAS 419 3491-3504, equations 12-15
         '''
         arg = (nu*nu_prime)/(self.nu_star**2)
-        exponent = -self.alpha[self.flag] + 0.5*self.Delta_alpha[self.flag]*np.log(arg)
+        exponent = -self.alpha[self.flag] + 0.5*(self.Delta_alpha[self.flag]**2)*np.log(arg)
         return (self.A[self.flag]**2)*(arg**exponent) - self.m(nu)*self.m(nu_prime)
+        # return (self.A[self.flag]**2)*(arg**exponent) 
 
     def m(self,v):
         arg = v/self.nu_star
-        exponent = -self.alpha[self.flag] + 0.5*self.Delta_alpha[self.flag]*np.log(arg)
+        exponent = -self.alpha[self.flag] + 0.5*(self.Delta_alpha[self.flag]**2)*np.log(arg)
         return self.A[self.flag]*(arg**exponent)
 
 
@@ -310,7 +322,7 @@ class kSZ_Fisher:
 
         Methods:
         --------
-        get_ksz_fisher:
+        compute_ksz_fisher:
             Returns the Fisher matrix for the kSZ.
         '''
 
@@ -319,11 +331,11 @@ class kSZ_Fisher:
         self.ksz_derivs = ksz_derivs 
         self.deriv_ells = deriv_ells
 
-    def get_ksz_fisher(self):
+    def compute_ksz_fisher(self):
 
         self.interpolate_ksz_variance()
         self.get_ksz_cov()
-        self.compute_fisher()
+        self.get_fisher()
 
         return self.fisher
 
@@ -345,7 +357,7 @@ class kSZ_Fisher:
         # the ksz derivs defined for more ell than the variance is, so we have 
         # adjust the range
 
-        lower_cutoff_ind = 1 
+        lower_cutoff_ind = 0
         upper_cutoff_ind = np.argwhere(self.deriv_ells < max(self.ksz_variance_ells))[-1][0]+1
         self.ells = self.deriv_ells[lower_cutoff_ind:upper_cutoff_ind]
         self.derivs = []
@@ -357,7 +369,7 @@ class kSZ_Fisher:
         self.ksz_cov = np.eye(len(self.ells))*self.ksz_noise
         self.ksz_cov_inv = inv(self.ksz_cov)
 
-    def compute_fisher(self):
+    def get_fisher(self):
         '''computes the fisher matrix'''
 
         fisher_shape = len(self.ksz_derivs)
@@ -369,7 +381,7 @@ class kSZ_Fisher:
                     for j in range(len(self.ells)):
                         fisher[alpha, beta] += self.get_fisher_entry(alpha,beta,i,j)
 
-        self.fisher = fisher
+        self.fisher = (fisher + fisher.T)/2
 
     def get_fisher_entry(self,a,b,i,j):
         return self.derivs[a][i]*self.ksz_cov_inv[i,j]*self.derivs[b][j]
@@ -377,10 +389,11 @@ class kSZ_Fisher:
 
 
 class KL_transform:
+    '''Computes the Karhunen-Loeve transform for two matrices, M1 and M2, 
+    generating the M1-to-M2 transformation matrix'''
 
     def __init__(self, M1, M2):
-        '''Computes the Karhunen-Loeve transform for two matrices, M1 and M2, 
-        generating the M1-to-M2 transformation matrix'''
+       
 
         #initializing some attributes
         self.M1 = M1
@@ -467,9 +480,10 @@ class KL_transform:
         
         ax.grid()
         plt.legend()
+        plt.show()
 
 
-def load_derivatives(path):
+def load_derivatives(path, const_xHI = False):
     '''Assumes directory structure: 
     
     results
@@ -497,9 +511,9 @@ def load_derivatives(path):
     zval_pos = []
     zval_neg = []
 
-    for d in os.listdir('results'):
-        for f in os.listdir("results/" +d):
-            loc = "results/"+d+"/"+f
+    for d in os.listdir(path):
+        for f in os.listdir(path +"/"+d):
+            loc = "/" + path +"/"+d+"/"+f
             zval = (int(f.split("_")[6]))
             per_type =(f.split("_")[-1].split(".")[0])
             
@@ -523,8 +537,12 @@ def load_derivatives(path):
     derivs = specs_pos_sorted - specs_neg_sorted
 
     #dividing by 2*delta-x_HI ; this part should not be hardcoded
-    derivs[:39] /= 2*0.01
-    derivs[39:49] /= 2*0.001
-    derivs[49:] /= 2*0.0001
-
+    if const_xHI:
+        derivs /= 2*0.1
+        print("DING DING")
+    else:
+        derivs[:39] /= 2*0.01
+        derivs[39:49] /= 2*0.001
+        derivs[49:] /= 2*0.0001 
+        print("BLA BLA")
     return ells,derivs
