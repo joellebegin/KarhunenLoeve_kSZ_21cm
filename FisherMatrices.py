@@ -7,7 +7,7 @@ import os
 class GSFisher:
 
     def __init__(self,band = np.array([100,200]), nu_lims = np.array([110,200]),
-    N_samples = 100, N_zbins = 20, int_time = 5*3600, N_poly=3, 
+    N_samples = 100, N_zbins = 20, int_time = 100*3600, N_poly=3, 
     fgnd_fid=np.array([np.log(320*1000),-2.54,-0.074,0.013])):
         '''
         Generates Fisher matrices for the 21cm signal, derivatives taken with 
@@ -76,19 +76,42 @@ class GSFisher:
         
     #====================== METHODS THAT RETURN FUNCTIONS =====================#
         
-    def compute_fisher_fgnds_marginalized(self):
+    def compute_fisher_fgnds_marginalized(self, const_xHI = False, const_xHI_val = 0.5,
+    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None):
         '''return fisher matrix with marginalized foregrounds'''
         
+        self.const_xHI = const_xHI
+        self.const_xHI_val = const_xHI_val
+
+        self.linear = linear
+        self.zend = zend 
+        self.z_start = z_start
+
+        self.spline = spline 
+        self.spline_fct = spline_fct
+
+
         self.fgnds_in_cov = False
         self.get_fisher()
+
+        marginalized = inv(inv(self.fisher)[:-4,:-4])
         
-        return self.fisher
+        return marginalized
 
 
-    def compute_fisher_fgnd_cov(self, const_xHI = False):
+    def compute_fisher_fgnd_cov(self, const_xHI = False, const_xHI_val = 0.5,
+    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None):
         '''returns fisher matrix with foregrounds included in covariance'''
 
         self.const_xHI = const_xHI
+        self.const_xHI_val = const_xHI_val
+
+        self.linear = linear
+        self.zend = zend 
+        self.z_start = z_start
+
+        self.spline = spline 
+        self.spline_fct = spline_fct
         #------------------------ foreground paramters ------------------------#
         self.nu_star = 150 # MHz
         
@@ -96,6 +119,7 @@ class GSFisher:
         self.A = [335.4*1000, 33.5*1000]#mK 
         self.alpha= [2.8,2.15] 
         self.Delta_alpha = [0.1,0.01] 
+
         #----------------------------------------------------------------------#
         
         self.fgnds_in_cov = True
@@ -203,10 +227,19 @@ class GSFisher:
         delta_z = 1
         
         if self.const_xHI:
-            xHI = 0.5*np.ones_like(self.z_linspace)
+            xHI = self.const_xHI_val*np.ones_like(self.z_linspace)
         
+        elif self.linear: 
+            slope = 1/(self.z_start - self.zend)
+            xHI = self.z_linspace*slope - slope*self.zend
+
+        elif self.spline:
+            xHI = self.spline_fct(self.z_linspace)
+
         else: #tanh model
             xHI = 0.5*(np.tanh((self.z_linspace-z_r)/delta_z) +1)
+
+        
         
         return (T_21cm)*np.sqrt((1+self.z_linspace)/10)*xHI
 
@@ -242,7 +275,7 @@ class GSFisher:
         #-------------------------- noise covariance --------------------------# 
         self.T_sky = self.get_T_fg() + self.get_T_b()
         # self.channel_bwidth = (self.nu_linspace[0]-self.nu_linspace[1])*1000 #Hz
-        self.channel_bwidth = 0.1*1000
+        self.channel_bwidth = (self.nu_linspace[0]-self.nu_linspace[1])*1e6
         
         self.variance = (self.T_sky**2)/(self.channel_bwidth*self.int_time)
         self.C_noise = np.identity(self.N_samples)*self.variance
@@ -357,7 +390,7 @@ class kSZ_Fisher:
         # the ksz derivs defined for more ell than the variance is, so we have 
         # adjust the range
 
-        lower_cutoff_ind = 0
+        lower_cutoff_ind = 1
         upper_cutoff_ind = np.argwhere(self.deriv_ells < max(self.ksz_variance_ells))[-1][0]+1
         self.ells = self.deriv_ells[lower_cutoff_ind:upper_cutoff_ind]
         self.derivs = []
@@ -388,102 +421,7 @@ class kSZ_Fisher:
 
 
 
-class KL_transform:
-    '''Computes the Karhunen-Loeve transform for two matrices, M1 and M2, 
-    generating the M1-to-M2 transformation matrix'''
-
-    def __init__(self, M1, M2):
-       
-
-        #initializing some attributes
-        self.M1 = M1
-        self.M2 = M2 
-        self.M_dim = self.M1.shape[0]
-        
-
-    def do_KL_transform(self, sort_eig = False):
-        '''Comptues R, which is the transforamtion matrix of the KL transform. 
-
-        sort_eig: Bool or str
-            deciding order of eigenvalues
-            
-            sort_eig = False --> randomly ordered eigenvalues 
-                     = "ascending" --> small to large 
-                     = "descending" --> large to small
-        '''
-        self.sort_eig = sort_eig
-
-        #diagonalizes the first matrix
-        self.R1 = self.diagonalizing_matrix(self.M1)
-        self.M1_prime = self.R1.T@self.M1@self.R1 
-        
-        #matrix such that R2^{-1} @ M1_prime @ R2 = Identity
-        self.R2 = np.identity(self.M1.shape[0])*(1/np.sqrt(np.diag(self.M1_prime)))
-        self.M2_tilde = self.R2.T@self.R1.T@self.M2@self.R1@self.R2
-
-        #diagonalizes M2_tilde 
-        self.R3 = self.diagonalizing_matrix(self.M2_tilde)
-    
-        self.R = self.R1@self.R2@self.R3  #the transformation matrix
-        self.get_modes() #getting modes of transformation matrix
-
-    def diagonalizing_matrix(self, matrix):
-        '''returns matrix M such that ( M.T @ matrix @ M ) is diagonal'''
-        eigvals, eigvects = np.linalg.eig(matrix)
-        
-        if self.sort_eig == "ascending": #[smallest eig,...,largest eig]
-            M_diagonalizing = np.real((eigvects.T[np.argsort(eigvals)]).T)
-
-        elif self.sort_eig == "descending": #[largest eig,...,smallest eig]
-            M_diagonalizing = np.real((eigvects.T[np.flip(np.argsort(eigvals))]).T)
-        
-        else:        
-            M_diagonalizing = np.real(eigvects)
-        
-        return M_diagonalizing
-
-
-    def get_modes(self):
-        '''Getting the KL modes'''
-        self.KL_modes = []
-        for i in range(self.M_dim):
-            v = np.zeros(self.M_dim)
-            v[i] = 1
-            self.KL_modes.append(np.matmul(self.R, v))
-
-    def plot_modes(self, n_modes, scatter = False, save = False, savename = "KL_modes.png"):
-        "Plots n_modes in same axis"
-
-        fig, ax = plt.subplots()
-        for i in range(n_modes):
-            lab = "Mode " + str(i)
-            if scatter:
-                ax.scatter(np.arange(self.M_dim),self.KL_modes[i], label = lab)
-            else:
-                ax.plot(np.arange(self.M_dim),self.KL_modes[i], label = lab)
-        ax.grid()
-        plt.legend()
-
-        if save:
-            plt.savefig(savename, bbox_inches = 'tight')
-
-    def plot_mode(self, mode, scatter = False):
-        "plots a single KL mode"
-        fig, ax = plt.subplots()
-        
-        lab = "Mode " + str(mode)
-        ax.set_title(lab)
-        if scatter:
-            ax.scatter(np.arange(self.M_dim),self.KL_modes[mode], label = lab)
-        else:
-            ax.plot(np.arange(self.M_dim),self.KL_modes[mode], label = lab)
-        
-        ax.grid()
-        plt.legend()
-        plt.show()
-
-
-def load_derivatives(path, const_xHI = False):
+def load_derivatives(path, const_xHI = False,perval = 0.1, log = True):
     '''Assumes directory structure: 
     
     results
@@ -537,12 +475,13 @@ def load_derivatives(path, const_xHI = False):
     derivs = specs_pos_sorted - specs_neg_sorted
 
     #dividing by 2*delta-x_HI ; this part should not be hardcoded
-    if const_xHI:
-        derivs /= 2*0.1
-        print("DING DING")
+    if log: 
+        return ells, derivs
     else:
-        derivs[:39] /= 2*0.01
-        derivs[39:49] /= 2*0.001
-        derivs[49:] /= 2*0.0001 
-        print("BLA BLA")
-    return ells,derivs
+        if const_xHI:
+            derivs /= 2*perval
+        else:
+            derivs[:39] /= 2*0.01
+            derivs[39:49] /= 2*0.001
+            derivs[49:] /= 2*0.0001 
+        return ells,derivs
