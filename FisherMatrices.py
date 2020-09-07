@@ -1,6 +1,6 @@
 import numpy as np 
 import matplotlib.pyplot as plt 
-from scipy.linalg import inv
+from scipy.linalg import inv,eigh
 from scipy import interpolate
 import os
 
@@ -100,7 +100,8 @@ class GSFisher:
 
 
     def compute_fisher_fgnd_cov(self, const_xHI = False, const_xHI_val = 0.5,
-    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None):
+    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None,
+    assert_Cfg_posdef=False):
         '''returns fisher matrix with foregrounds included in covariance'''
 
         self.const_xHI = const_xHI
@@ -112,6 +113,8 @@ class GSFisher:
 
         self.spline = spline 
         self.spline_fct = spline_fct
+
+        self.assert_Cfg_posdef= assert_Cfg_posdef
         #------------------------ foreground paramters ------------------------#
         self.nu_star = 150 # MHz
         
@@ -274,7 +277,6 @@ class GSFisher:
        
         #-------------------------- noise covariance --------------------------# 
         self.T_sky = self.get_T_fg() + self.get_T_b()
-        # self.channel_bwidth = (self.nu_linspace[0]-self.nu_linspace[1])*1000 #Hz
         self.channel_bwidth = (self.nu_linspace[0]-self.nu_linspace[1])*1e6
         
         self.variance = (self.T_sky**2)/(self.channel_bwidth*self.int_time)
@@ -296,7 +298,19 @@ class GSFisher:
 
         self.C_synch = self.foreground_covariance(0)
         self.C_ff = self.foreground_covariance(1)
-        self.C_fg = self.C_synch + self.C_ff
+        
+        C_fg = self.C_synch + self.C_ff
+
+        if self.assert_Cfg_posdef:#taking care of positive-definiteness
+            vals,vects = eigh(C_fg)
+            vects = vects.T
+            C = np.zeros_like(C_fg)
+            for i,val in enumerate(vals):
+                if val >0:
+                    C += val*np.outer(vects[i],vects[i])
+            self.C_fg = C 
+        else:
+            self.C_fg = C_fg
         
     def foreground_covariance(self, flag):
         '''Gets the covariance for the foreground emission.
