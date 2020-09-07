@@ -155,12 +155,9 @@ class GSFisher:
 
         a_arr = self.get_array(a)
         b_arr = self.get_array(b)
-                
-        entry = 0
-        for i in range(self.N_samples):
-            for j in range(self.N_samples):
-                entry += a_arr[i]*self.cov_inv[i,j]*b_arr[j]
         
+        entry = np.dot(a_arr,np.dot(self.cov_inv,b_arr))
+
         return entry
 
     def get_array(self,param):
@@ -424,14 +421,12 @@ class kSZ_Fisher:
 
         for alpha in range(fisher_shape):
             for beta in range(fisher_shape):
-                for i in range(len(self.ells)):
-                    for j in range(len(self.ells)):
-                        fisher[alpha, beta] += self.get_fisher_entry(alpha,beta,i,j)
+                    fisher[alpha, beta] += self.get_fisher_entry(alpha,beta)
 
         self.fisher = (fisher + fisher.T)/2
 
-    def get_fisher_entry(self,a,b,i,j):
-        return self.derivs[a][i]*self.ksz_cov_inv[i,j]*self.derivs[b][j]
+    def get_fisher_entry(self,a,b):
+        return np.dot(self.derivs[a],np.dot(self.ksz_cov_inv,self.derivs[b]))
 
 
 
