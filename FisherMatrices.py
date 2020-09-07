@@ -20,9 +20,15 @@ class GSFisher:
 
         band: 1d array
             The frequencies over which the experiment is conducted, [nu_min, nu_max]
+            in MHz
 
         nu_lims: 1d array
-            The frequencies that will be considered for the derivatives
+            The frequencies that will be considered for the derivatives in MHz. 
+            
+            Not necessarily the same as the band; sometimes the experiment will 
+            be conducted over a frequency band (which will afftect the foreground
+            parametrization, for instance), but we'll only consider some frequencies
+            in that band for the fisher matrix computation.
 
         N_samples: int
             How many temperature samples are measured in the frequency range set 
@@ -40,6 +46,7 @@ class GSFisher:
         fgnd_fid: 1d array 
             The fiducial parameters for the foreground polynomial fit, in order 
             [a_0, a_1, ...]. Default from Pritchard and Loeb 2010, arxiv 1005.4057
+            for a bandwidth of [100,200] MHz
 
 
         Methods:
@@ -77,9 +84,31 @@ class GSFisher:
     #====================== METHODS THAT RETURN FUNCTIONS =====================#
         
     def compute_fisher_fgnds_marginalized(self, const_xHI = False, const_xHI_val = 0.5,
-    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None):
-        '''return fisher matrix with marginalized foregrounds'''
+    linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None,
+    delta_z = 1, z_mid =8):
+        '''
+        Method for computing Fisher matrix with marginalized foreground
+
+        Parameters:
+        -----------
+
+        *ionization history flags:
+            const_xHI: constant ionization history
+            const_xHI_val: value of constant ionization history
+            linear: linear ionization history
+            zend,zstart: redshifts for which xHI=1 and =0 resp.
+            spline: cubic spline ionization history
+            spline_fct: function to evaluate spline, xHI(z)
+            delta_z, z_mid: parameters for tanh ionization
+
+
+
+        Returns:
+        --------
+        fisher matrix marginalized over foreground parameters
+        '''
         
+        #---- attributes determining which ionization model is considered ----#
         self.const_xHI = const_xHI
         self.const_xHI_val = const_xHI_val
 
@@ -90,20 +119,46 @@ class GSFisher:
         self.spline = spline 
         self.spline_fct = spline_fct
 
-
-        self.fgnds_in_cov = False
+        self.delta_z = delta_z 
+        self.z_mid = z_mid
+        #---------------------------------------------------------------------#
+        self.fgnds_in_cov = False #foreground flag
         self.get_fisher()
 
-        marginalized = inv(inv(self.fisher)[:-4,:-4])
+        marginalized = inv(inv(self.fisher)[:-4,:-4]) #marginalizing
         
         return marginalized
 
 
     def compute_fisher_fgnd_cov(self, const_xHI = False, const_xHI_val = 0.5,
     linear = False, zend = 5.5, z_start = 18, spline = False, spline_fct = None,
-    assert_Cfg_posdef=False):
-        '''returns fisher matrix with foregrounds included in covariance'''
+    delta_z = 1, z_mid =8, assert_Cfg_posdef=False):
+        '''Method for computing fisher matrix with foregrounds included in covariance
 
+        Parameters:
+        -----------
+
+        *ionization history flags:
+            const_xHI: constant ionization history
+            const_xHI_val: value of constant ionization history
+            linear: linear ionization history
+            zend,zstart: redshifts for which xHI=1 and =0 resp.
+            spline: cubic spline ionization history
+            spline_fct: function to evaluate spline, xHI(z)
+            delta_z, z_mid: parameters for tanh ionization
+
+        assert_Cfg_posdef: Bool
+            if True, the foreground covariance will be reconstructed according to
+            C = \sum_i \lambda_i < u_i^T u_i > where {lambda_i, u_i} are 
+            eigenpairs of the foreground covariance, and the lambda_i < 0 are 
+            excluded to ensure C_fg is positive definite. 
+
+        Returns:
+        --------
+        fisher matrix with foregrounds included in covariance
+
+        '''
+        #---- attributes determining which ionization model is considered ----#
         self.const_xHI = const_xHI
         self.const_xHI_val = const_xHI_val
 
@@ -114,7 +169,8 @@ class GSFisher:
         self.spline = spline 
         self.spline_fct = spline_fct
 
-        self.assert_Cfg_posdef= assert_Cfg_posdef
+        self.delta_z = delta_z 
+        self.z_mid = z_mid
         #------------------------ foreground paramters ------------------------#
         self.nu_star = 150 # MHz
         
@@ -126,6 +182,8 @@ class GSFisher:
         #----------------------------------------------------------------------#
         
         self.fgnds_in_cov = True
+        self.assert_Cfg_posdef= assert_Cfg_posdef
+
         self.get_fisher()
 
         return self.fisher
@@ -150,8 +208,8 @@ class GSFisher:
                 self.fisher[alpha, beta] = np.round(self.get_entry(alpha, beta),6)
 
     def get_entry(self,a,b):
-        '''gets array of temperatures to be summed over, and sums them up to 
-        get the matrix entry'''
+        '''gets array of temperatures to be summed over, and sums them up (with
+        pretty linear algebra magic) to get the matrix entry'''
 
         a_arr = self.get_array(a)
         b_arr = self.get_array(b)
@@ -161,6 +219,7 @@ class GSFisher:
         return entry
 
     def get_array(self,param):
+        '''getting the derivative arrays to be summed over for matrix entry'''
         arr = np.zeros(self.N_samples)
         
         if param < (self.N_zbins): #z bin parameter
@@ -174,6 +233,7 @@ class GSFisher:
 
     #=========================== Binning functions ============================#    
     def get_redshift_bins(self):
+        '''given the redshift range and number of bins, gets bin edges'''
     
         self.bin_edges = np.linspace(self.z_limits[1], self.z_limits[0], self.N_zbins+1)
         self.get_binned()
@@ -190,6 +250,7 @@ class GSFisher:
             where dTb_binned[0] is an array of the derivatives of the brigtness
             temperature that fall into the bin {bin_edges[0],bin_edges[1]} and etc'''
 
+        #this is UGLY. make nice one day
         bin_indices = [0]
         for bin_val in self.bin_edges[1:]:
             val = np.argmax( self.z_linspace > bin_val)
@@ -217,14 +278,11 @@ class GSFisher:
         respect to x_HI '''
 
         self.dT_b = 27*np.sqrt((1+self.z_linspace)/10)
-        # self.dT_b = np.ones_like(self.z_linspace)
 
 
     def get_T_b(self):
-        '''tanh model of the brightness temperature'''
+        '''Gets brightness temperature for each sampled frequency'''
         T_21cm = 27 #mK
-        z_r = 8
-        delta_z = 1
         
         if self.const_xHI:
             xHI = self.const_xHI_val*np.ones_like(self.z_linspace)
@@ -237,17 +295,16 @@ class GSFisher:
             xHI = self.spline_fct(self.z_linspace)
 
         else: #tanh model
-            xHI = 0.5*(np.tanh((self.z_linspace-z_r)/delta_z) +1)
+            xHI = 0.5*(np.tanh((self.z_linspace-self.z_mid)/self.delta_z) +1)
 
-        
         
         return (T_21cm)*np.sqrt((1+self.z_linspace)/10)*xHI
 
     #======================= foreground model functions =======================#
     
     def dT_fg(self, k):
-        '''k is which coefficient of the foreground parametrization the 
-        derivative is being taken wrt'''
+        '''Derivatives of foreground temperature, taking wrt a parameter in the 
+        polynomial parametrization k'''
 
         poly_arg = np.log(self.nu_linspace/self.nu_0)
         poly = np.zeros(self.N_samples) 
@@ -285,7 +342,7 @@ class GSFisher:
             covariance = self.C_noise + self.C_fg
         else:
             covariance = self.C_noise 
-        # self.cov = self.C_noise
+
         self.cov = covariance
         self.cov_inv = inv(self.cov)
 
@@ -334,7 +391,6 @@ class GSFisher:
         arg = (nu*nu_prime)/(self.nu_star**2)
         exponent = -self.alpha[self.flag] + 0.5*(self.Delta_alpha[self.flag]**2)*np.log(arg)
         return (self.A[self.flag]**2)*(arg**exponent) - self.m(nu)*self.m(nu_prime)
-        # return (self.A[self.flag]**2)*(arg**exponent) 
 
     def m(self,v):
         arg = v/self.nu_star
